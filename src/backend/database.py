@@ -4,23 +4,12 @@ Configuração e setup do database MongoDB para a API da Mergington High School
 
 from pymongo import MongoClient
 from argon2 import PasswordHasher
-import copy
 
-# Try to connect to MongoDB, but use fallback if not available
-try:
-    # Conectar ao MongoDB
-    client = MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=1000)
-    # Test the connection
-    client.admin.command('ping')
-    db = client['mergington_high']
-    activities_collection = db['activities']
-    teachers_collection = db['teachers']
-    USE_MONGODB = True
-except Exception as e:
-    USE_MONGODB = False
-    # In-memory storage
-    activities_data = {}
-    teachers_data = {}
+# Conectar ao MongoDB
+client = MongoClient('mongodb://localhost:27017/')
+db = client['mergington_high']
+activities_collection = db['activities']
+teachers_collection = db['teachers']
 
 # Methods
 def hash_password(password):
@@ -30,116 +19,16 @@ def hash_password(password):
 
 def init_database():
     """Inicializar database se estiver vazio"""
-    global activities_data, teachers_data
-    
-    if USE_MONGODB:
-        # Inicializar activities se estiver vazio
-        if activities_collection.count_documents({}) == 0:
-            for name, details in initial_activities.items():
-                activities_collection.insert_one({"_id": name, **details})
-                
-        # Inicializar contas de teacher se estiver vazio
-        if teachers_collection.count_documents({}) == 0:
-            for teacher in initial_teachers:
-                teachers_collection.insert_one({"_id": teacher["username"], **teacher})
-    else:
-        # Initialize in-memory storage
-        if not activities_data:
-            activities_data = copy.deepcopy(initial_activities)
-        if not teachers_data:
-            teachers_data = {teacher["username"]: teacher for teacher in initial_teachers}
-        
-        # Update the collections to point to the new data
-        activities_collection.data = activities_data
-        teachers_collection.data = teachers_data
 
-# Mock collection classes for in-memory storage
-class MockCollection:
-    def __init__(self, data_dict):
-        self.data = data_dict
-    
-    def count_documents(self, filter_dict):
-        return len(self.data)
-    
-    def insert_one(self, document):
-        doc_id = document.get("_id")
-        if doc_id:
-            self.data[doc_id] = {k: v for k, v in document.items() if k != "_id"}
-    
-    def find(self, filter_dict=None):
-        if filter_dict is None or not filter_dict:
-            return [{"_id": k, **v} for k, v in self.data.items()]
-        
-        results = []
-        for k, v in self.data.items():
-            match = True
-            for field, criteria in filter_dict.items():
-                if field == "schedule_details.days":
-                    if "$in" in criteria:
-                        activity_days = v.get("schedule_details", {}).get("days", [])
-                        if not any(day in activity_days for day in criteria["$in"]):
-                            match = False
-                            break
-                elif field == "schedule_details.start_time":
-                    if "$gte" in criteria:
-                        activity_start = v.get("schedule_details", {}).get("start_time", "")
-                        if activity_start < criteria["$gte"]:
-                            match = False
-                            break
-                elif field == "schedule_details.end_time":
-                    if "$lte" in criteria:
-                        activity_end = v.get("schedule_details", {}).get("end_time", "")
-                        if activity_end > criteria["$lte"]:
-                            match = False
-                            break
+    # Inicializar activities se estiver vazio
+    if activities_collection.count_documents({}) == 0:
+        for name, details in initial_activities.items():
+            activities_collection.insert_one({"_id": name, **details})
             
-            if match:
-                results.append({"_id": k, **v})
-        
-        return results
-    
-    def find_one(self, filter_dict):
-        doc_id = filter_dict.get("_id")
-        if doc_id and doc_id in self.data:
-            return {"_id": doc_id, **self.data[doc_id]}
-        return None
-    
-    def update_one(self, filter_dict, update_dict):
-        doc_id = filter_dict.get("_id")
-        if doc_id and doc_id in self.data:
-            if "$set" in update_dict:
-                self.data[doc_id].update(update_dict["$set"])
-                return type('Result', (), {'modified_count': 1})()
-            elif "$push" in update_dict:
-                for field, value in update_dict["$push"].items():
-                    if field not in self.data[doc_id]:
-                        self.data[doc_id][field] = []
-                    self.data[doc_id][field].append(value)
-                return type('Result', (), {'modified_count': 1})()
-            elif "$pull" in update_dict:
-                for field, value in update_dict["$pull"].items():
-                    if field in self.data[doc_id] and isinstance(self.data[doc_id][field], list):
-                        if value in self.data[doc_id][field]:
-                            self.data[doc_id][field].remove(value)
-                return type('Result', (), {'modified_count': 1})()
-        return type('Result', (), {'modified_count': 0})()
-    
-    def aggregate(self, pipeline):
-        # Simple implementation for days aggregation
-        if len(pipeline) >= 2 and pipeline[0].get("$unwind") == "$schedule_details.days":
-            days = set()
-            for k, v in self.data.items():
-                activity_days = v.get("schedule_details", {}).get("days", [])
-                days.update(activity_days)
-            return [{"_id": day} for day in sorted(days)]
-        return []
-
-# Override collections if not using MongoDB
-if not USE_MONGODB:
-    activities_data = {}
-    teachers_data = {}
-    activities_collection = MockCollection(activities_data)
-    teachers_collection = MockCollection(teachers_data)
+    # Inicializar contas de teacher se estiver vazio
+    if teachers_collection.count_documents({}) == 0:
+        for teacher in initial_teachers:
+            teachers_collection.insert_one({"_id": teacher["username"], **teacher})
 
 # Database inicial se estiver vazio
 initial_activities = {
@@ -274,17 +163,6 @@ initial_activities = {
         },
         "max_participants": 16,
         "participants": ["william@mergington.edu", "jacob@mergington.edu"]
-    },
-    "Manga Maniacs": {
-        "description": "Explore as histórias fantásticas dos personagens mais interessantes dos Mangás japoneses (graphic novels).",
-        "schedule": "Terças, 19:00 - 20:30",
-        "schedule_details": {
-            "days": ["Tuesday"],
-            "start_time": "19:00",
-            "end_time": "20:30"
-        },
-        "max_participants": 15,
-        "participants": []
     }
 }
 
