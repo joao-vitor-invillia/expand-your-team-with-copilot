@@ -1,0 +1,99 @@
+name: Passo 4
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  REVIEW_FILE: ".github/steps/x-review.md"
+
+jobs:
+  find_exercise:
+    name: Encontrar Issue do exercício
+    uses: dev-pods/exercise-toolkit/.github/workflows/find-exercise-issue.yml@v0.1.1
+
+  check_step_work:
+    name: Verificar trabalho do passo
+    runs-on: ubuntu-latest
+    needs: [find_exercise]
+    env:
+      ISSUE_URL: ${{ needs.find_exercise.outputs.issue-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Obter templates de resposta
+        uses: actions/checkout@v4
+        with:
+          repository: dev-pods/exercise-toolkit
+          path: exercise-toolkit
+          ref: v0.1.1
+
+      # INÍCIO: Verificar exercício prático
+
+      # Nada para verificar. Fazer merge do pull request é suficiente.
+
+      # FIM: Verificar exercício prático
+
+      - name: Criar comentário - passo finalizado - revisão final próxima
+        run: |
+          gh issue comment "$ISSUE_URL" \
+            --body-file exercise-toolkit/markdown-templates/step-feedback/lesson-review.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  post_review_content:
+    name: Postar conteúdo da revisão
+    needs: [find_exercise, check_step_work]
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_URL: ${{ needs.find_exercise.outputs.issue-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Obter templates de resposta
+        uses: actions/checkout@v4
+        with:
+          repository: dev-pods/exercise-toolkit
+          path: exercise-toolkit
+          ref: v0.1.1
+
+      - name: Criar comentário - adicionar conteúdo do passo
+        run: |
+          gh issue comment "$ISSUE_URL" \
+            --body-file "$REVIEW_FILE"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  finish_exercise:
+    name: Finalizar Exercício
+    needs: [find_exercise, post_review_content]
+    uses: dev-pods/exercise-toolkit/.github/workflows/finish-exercise.yml@v0.1.1
+    with:
+      issue-url: ${{ needs.find_exercise.outputs.issue-url }}
+      exercise-title: "Expanda sua equipe com o GitHub Copilot"
+
+  disable_workflow:
+    name: Desabilitar este workflow
+    needs: [find_exercise, post_review_content]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Desabilitar workflow atual
+        run: gh workflow disable "${{github.workflow}}" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

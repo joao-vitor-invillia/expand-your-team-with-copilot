@@ -1,0 +1,173 @@
+name: Passo 1
+
+on:
+  issues:
+    types: [assigned]
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+env:
+  STEP_2_FILE: ".github/steps/2-collaborate.md"
+
+jobs:
+  find_exercise:
+    name: Encontrar Issue do exercício
+    uses: dev-pods/exercise-toolkit/.github/workflows/find-exercise-issue.yml@v0.1.1
+
+  check_step_work:
+    name: Verificar trabalho do passo
+    runs-on: ubuntu-latest
+    needs: [find_exercise]
+    env:
+      ISSUE_URL: ${{ needs.find_exercise.outputs.issue-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Obter templates de resposta
+        uses: actions/checkout@v4
+        with:
+          repository: dev-pods/exercise-toolkit
+          path: exercise-toolkit
+          ref: v0.1.1
+
+      # INÍCIO: Verificar exercício prático
+
+      # Nada para verificar.
+
+      # FIM: Verificar exercício prático
+
+      - name: Construir mensagem - passo finalizado
+        id: build-message-step-finish
+        uses: dev-pods/action-text-variables@v0.0.1
+        with:
+          template-file: exercise-toolkit/markdown-templates/step-feedback/step-finished-prepare-next-step.md
+          template-vars: |
+            next_step_number: 2
+
+      - name: Atualizar comentário - passo finalizado
+        run: |
+          gh issue comment "$ISSUE_URL" \
+            --body "$ISSUE_BODY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_BODY: ${{ steps.build-message-step-finish.outputs.updated-text }}
+
+  create_issues:
+    name: Criar issues
+    needs: [check_step_work]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # TODO: substituir por https://github.com/marketplace/actions/create-an-issue
+      - name: Criar issues
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function createIssuesFromMarkdownFiles(dir, label) {
+              // Obter lista de arquivos markdown
+              const files = fs.readdirSync(dir);
+              console.log(`Criando ${files.length} issues com label '${label}' da pasta '${dir}'.`);
+
+              // Criar a issue
+              for (const file of files) {
+
+                // Carregar o conteúdo do arquivo
+                const fullPath = path.join(dir, file);
+                const fileContent = fs.readFileSync(fullPath, 'utf8');
+
+                // Dividir o conteúdo do arquivo em título, corpo e comentários
+                const title = fileContent.split('\n')[0].replace('#', '').trim();
+                const body = fileContent.split('\n').slice(1).join('\n').split('----- COMMENTS -----')[0].trim();
+                let comments = fileContent.split('----- COMMENTS -----').slice(1).join('\n').trim().split('\n')
+                comments = comments.filter(comment => comment.trim() !== '');
+
+                // Log do conteúdo
+                if (process.env.DEBUG) {
+                  console.log(`\nFile: ${file}`);
+                  console.log(`\n\Title: ${title}`);
+                  console.log(`Body:\n${body}`);
+                  for (const comment of comments) {
+                    console.log(`Comment: '${comment.trim()}'`);
+                  }
+                  console.log(`\n`);
+                }
+
+                // Criar a issue
+                const issue = await github.rest.issues.create({
+                  owner: owner,
+                  repo: repo,
+                  title: title,
+                  body: body,
+                  labels: [label],
+                });
+
+                // Adicionar comentários
+                for (const comment of comments) {
+                  await github.rest.issues.createComment({
+                    owner: owner,
+                    repo: repo,
+                    issue_number: issue.data.number,
+                    body: comment,
+                  });
+                }
+
+                console.log(`Issue criada: ${title}, URL: ${issue.data.html_url} com ${comments.length} comentários.`);
+              }
+            };
+
+            // Carregar issues de ambas as pastas
+            await createIssuesFromMarkdownFiles('.github/steps/1-step-issues/bug/', 'bug');
+            await createIssuesFromMarkdownFiles('.github/steps/1-step-issues/enhancement/', 'enhancement');
+
+  post_next_step_content:
+    name: Postar conteúdo do próximo passo
+    needs: [find_exercise, check_step_work]
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_URL: ${{ needs.find_exercise.outputs.issue-url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Obter templates de resposta
+        uses: actions/checkout@v4
+        with:
+          repository: dev-pods/exercise-toolkit
+          path: exercise-toolkit
+          ref: v0.1.1
+
+      - name: Criar comentário - adicionar conteúdo do passo
+        run: |
+          gh issue comment "$ISSUE_URL" \
+            --body-file "$STEP_2_FILE"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Criar comentário - observando progresso
+        run: |
+          gh issue comment "$ISSUE_URL" \
+            --body-file exercise-toolkit/markdown-templates/step-feedback/watching-for-progress.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Desabilitar workflow atual e habilitar o próximo
+        run: |
+          gh workflow disable "Step 1" || true
+          gh workflow enable "Step 2" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
